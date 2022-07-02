@@ -191,7 +191,7 @@ class Crawler:
 
         return ms_tickers
 
-    # TODO
+    # TODO: check
     def update_prices(self):
         # Get present tickers
         present_ticker_ids = pd.read_sql("SELECT DISTINCT ticker_id FROM daily_price", self.db.conn)
