@@ -11,6 +11,8 @@ from datetime import datetime
 from openpyxl import Workbook, load_workbook
 from typing import Optional, Dict, List, Tuple, Union
 import pymysql.cursors
+import time
+from tqdm import tqdm
 
 
 class Mydb:
@@ -91,6 +93,8 @@ class Crawler:
         self.VENDOR = data_vendor
         self.VENDOR_URL = ""
         self.VENDOR_ID: int
+        self.source = None
+
         self.db = database
 
         if self.VENDOR == "Yahoo":
@@ -123,3 +127,79 @@ class Crawler:
             self.tickers = list(self.ticker_index.keys())
 
         else:
+            self.tickers = ticker_list
+
+    def download_stock_data_chunk(self, start_idx, end_idx, tickers, start_date=None):
+        ms_tickers = []
+
+        for ticker in tickers[start_idx:end_idx]:
+            if self.VENDOR_ID == 1:
+                df = pdr.get_data_yahoo(ticker, start=start_date)
+
+                if df.empty:
+                    print(f"df is empty for {ticker}")
+                    ms_tickers.append(ticker)
+                    time.sleep(3)
+                    continue
+
+                for row in df.itertuples():
+                    values = [self.VENDOR_ID, self.ticker_index[ticker]] + list(row)
+                    self.db.insert('daily_price', values, ('data_vendor_id', 'ticker_id', 'price_date',
+                                                           'open_price', 'high_price', 'low_price',
+                                                           'close_price', 'adj_close_price', 'volume'))
+
+            elif self.VENDOR_ID == 2:
+                df = fdr.DataReader(ticker, start_date)
+
+                if df.empty:
+                    print(f"df is empty for {ticker}")
+                    ms_tickers.append(ticker)
+                    time.sleep(3)
+                    continue
+
+                for row in df.itertuples():
+                    values = [self.VENDOR_ID, self.ticker_index[ticker]] + list(row)
+                    self.db.insert('daily_price', values[:8], ('data_vendor_id', 'ticker_id', 'price_date',
+                                                               'open_price', 'high_price', 'low_price',
+                                                               'close_price', 'volume'))
+
+            # TODO
+            elif self.VENDOR_ID == 3:
+                # Investing.com
+                continue
+
+            # TODO
+            elif self.VENDOR_ID == 4:
+                # pykrx
+                continue
+
+        return ms_tickers
+
+    def download_stock_data(self, tickers, chunk_size=100, start_date=None):
+        n_chunks = -(-len(tickers) // chunk_size)
+
+        ms_tickers = []
+        for i in tqdm(range(0, n_chunks, chunk_size)):
+            ms_from_chunk = self.download_stock_data_chunk(i, i + chunk_size, tickers, start_date)
+            ms_tickers.append(ms_from_chunk)
+
+            if len(ms_from_chunk) > 40:
+                time.sleep(120)
+
+            else:
+                time.sleep(10)
+
+        return ms_tickers
+
+    # TODO
+    def update_prices(self):
+        # Get present tickers
+        present_ticker_ids = pd.read_sql("SELECT DISTINCT ticker_id FROM daily_price", self.db.conn)
+        index_ticker = {v: k for k, v in self.ticker_index.items()}
+        present_tickers = [index_ticker[i] for i in list(present_ticker_ids['ticker_id'])]
+
+        # Get last date
+        sql = "SELECT price_date FROM daily_price WHERE ticker_id=1"
+        dates = pd.read_sql(sql, self.db.conn)
+        last_date = dates.iloc[-1, 0]
+        self.download_stock_data(present_tickers, start_date=last_date)
